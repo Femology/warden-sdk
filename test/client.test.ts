@@ -1,0 +1,100 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Mocks the @stellar/stellar-sdk/contract module boundary rather than a
+ * live RPC network: WardenClient's own logic (correct method names, decimal
+ * -> i128 argument encoding, XDR round trip, contract-error mapping) is what
+ * these tests verify -- not the SDK's own transaction-assembly internals,
+ * which are exercised for real in the live-network verification the SDK was
+ * built against (see client.ts's design notes).
+ */
+const mockSpec = {
+  funcArgsToScVals: vi.fn((_method: string, args: Record<string, unknown>) => args),
+  funcResToNative: vi.fn(),
+};
+
+const mockClientFrom = vi.fn(async () => ({ spec: mockSpec }));
+const mockBuild = vi.fn();
+const mockFromXdr = vi.fn();
+
+vi.mock('@stellar/stellar-sdk/contract', () => ({
+  Client: { from: (...args: unknown[]) => mockClientFrom(...args) },
+  AssembledTransaction: {
+    build: (...args: unknown[]) => mockBuild(...args),
+    fromXdr: (...args: unknown[]) => mockFromXdr(...args),
+  },
+}));
+
+import { WardenClient } from '../src/client.js';
+
+const CONFIG = {
+  contractId: 'CTEST',
+  rpcUrl: 'https://example.invalid',
+  networkPassphrase: 'Test Passphrase',
+  referenceAssetDecimals: 7,
+};
+
+beforeEach(() => {
+  mockSpec.funcArgsToScVals.mockClear();
+  mockSpec.funcResToNative.mockClear();
+  mockClientFrom.mockClear();
+  mockBuild.mockClear();
+  mockFromXdr.mockClear();
+});
+
+describe('setPolicy build/submit round trip', () => {
+  it('buildSetPolicy encodes decimal amounts and returns unsigned xdr', async () => {
+    const toXdr = vi.fn(() => 'UNSIGNED_XDR');
+    mockBuild.mockResolvedValueOnce({ toXdr });
+
+    const client = new WardenClient(CONFIG);
+    const { xdr } = await client.buildSetPolicy('GWALLET', {
+      version: 1,
+      maxAmountNoStepUp: '150.00',
+      dailyVelocityCap: '500.00',
+      newRecipientRequiresStepUp: true,
+      trustedRecipients: [],
+    });
+
+    expect(xdr).toBe('UNSIGNED_XDR');
+    expect(mockBuild).toHaveBeenCalledTimes(1);
+
+    const callArgs = mockBuild.mock.calls[0]?.[0];
+    expect(callArgs.method).toBe('set_policy');
+    expect(callArgs.publicKey).toBe('GWALLET');
+
+    expect(mockSpec.funcArgsToScVals).toHaveBeenCalledWith('set_policy', {
+      wallet: 'GWALLET',
+      max_no_stepup: 1_500_000_000n,
+      daily_velocity_cap: 5_000_000_000n,
+      new_recipient_requires_stepup: true,
+    });
+  });
+
+  it('submitSetPolicy sends the signed xdr and resolves on success', async () => {
+    const unwrap = vi.fn(() => undefined);
+    const send = vi.fn(async () => ({ result: { unwrap } }));
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    await client.submitSetPolicy('SIGNED_XDR');
+
+    expect(mockFromXdr).toHaveBeenCalledTimes(1);
+    expect(mockFromXdr.mock.calls[0]?.[1]).toBe('SIGNED_XDR');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(unwrap).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitSetPolicy maps a contract error to a typed WardenSdkError', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('Transaction simulation failed: HostError: Error(Contract, #5)');
+    });
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    await expect(client.submitSetPolicy('SIGNED_XDR')).rejects.toMatchObject({
+      name: 'WardenSdkError',
+      code: 5,
+    });
+  });
+});
