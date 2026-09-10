@@ -146,4 +146,13 @@ export class WardenClient {
   async submitSetPolicy(signedXdr: string): Promise<void> {
     await this.submit<undefined>(signedXdr);
   }
+
+  async buildAddTrustedRecipient(wallet: string, recipient: string): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>('add_trusted_recipient', { wallet, recipient }, wallet);
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitAddTrustedRecipient(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
 }
