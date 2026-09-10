@@ -2,7 +2,9 @@ import { AssembledTransaction, Client as ContractClient, Spec } from '@stellar/s
 import type { ErrorMessage, Result } from '@stellar/stellar-sdk/contract';
 import type { Server } from '@stellar/stellar-sdk/rpc';
 
+import { decimalToI128 } from './codec.js';
 import { WardenSdkError } from './errors.js';
+import type { PortablePolicyRule } from './types.js';
 
 export interface WardenClientConfig {
   contractId: string;
@@ -125,5 +127,23 @@ export class WardenClient {
     } catch (error) {
       return mapContractError(error);
     }
+  }
+
+  async buildSetPolicy(wallet: string, rule: PortablePolicyRule): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'set_policy',
+      {
+        wallet,
+        max_no_stepup: decimalToI128(rule.maxAmountNoStepUp, this.config.referenceAssetDecimals),
+        daily_velocity_cap: decimalToI128(rule.dailyVelocityCap, this.config.referenceAssetDecimals),
+        new_recipient_requires_stepup: rule.newRecipientRequiresStepUp,
+      },
+      wallet,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitSetPolicy(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
   }
 }
