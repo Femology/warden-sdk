@@ -142,3 +142,47 @@ describe('addTrustedRecipient round trip', () => {
     });
   });
 });
+
+describe('removeTrustedRecipient round trip', () => {
+  it('buildRemoveTrustedRecipient passes wallet and recipient through and returns unsigned xdr', async () => {
+    const toXdr = vi.fn(() => 'UNSIGNED_XDR');
+    mockBuild.mockResolvedValueOnce({ toXdr });
+
+    const client = new WardenClient(CONFIG);
+    const { xdr } = await client.buildRemoveTrustedRecipient('GWALLET', 'GRECIPIENT');
+
+    expect(xdr).toBe('UNSIGNED_XDR');
+    const callArgs = mockBuild.mock.calls[0]?.[0];
+    expect(callArgs.method).toBe('remove_trusted_recipient');
+    expect(callArgs.publicKey).toBe('GWALLET');
+    expect(mockSpec.funcArgsToScVals).toHaveBeenCalledWith('remove_trusted_recipient', {
+      wallet: 'GWALLET',
+      recipient: 'GRECIPIENT',
+    });
+  });
+
+  it('submitRemoveTrustedRecipient sends the signed xdr and resolves on success', async () => {
+    const unwrap = vi.fn(() => undefined);
+    const send = vi.fn(async () => ({ result: { unwrap } }));
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    await client.submitRemoveTrustedRecipient('SIGNED_XDR');
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(unwrap).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitRemoveTrustedRecipient maps RecipientNotTrusted correctly', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('HostError: Error(Contract, #7)');
+    });
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    await expect(client.submitRemoveTrustedRecipient('SIGNED_XDR')).rejects.toMatchObject({
+      name: 'WardenSdkError',
+      code: 7,
+    });
+  });
+});
