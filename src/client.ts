@@ -106,7 +106,7 @@ export class WardenClient {
     signedXdr: string,
   ): Promise<AssembledTransaction<Result<T, ErrorMessage>>> {
     const spec = await this.getSpec();
-    return AssembledTransaction.fromXdr<Result<T, ErrorMessage>>(
+    const tx = AssembledTransaction.fromXdr<Result<T, ErrorMessage>>(
       {
         contractId: this.config.contractId,
         networkPassphrase: this.config.networkPassphrase,
@@ -116,6 +116,15 @@ export class WardenClient {
       signedXdr,
       spec,
     );
+    // AssembledTransaction.fromXdr only populates .built, never .signed --
+    // it has no way to know the XDR it was given already carries
+    // signatures. Since this method's entire contract is "the caller
+    // already signed this", mark it explicitly: .send() throws "not yet
+    // signed" otherwise, even against a fully-signed envelope. Found by
+    // actually running a submit* call against the live deployed contract,
+    // not by reading the types.
+    tx.signed = tx.built;
+    return tx;
   }
 
   /** Submits an already-signed XDR and returns the unwrapped success value. */
