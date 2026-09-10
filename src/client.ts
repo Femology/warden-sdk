@@ -129,7 +129,11 @@ export class WardenClient {
     }
   }
 
-  async buildSetPolicy(wallet: string, rule: PortablePolicyRule): Promise<{ xdr: string }> {
+  async buildSetPolicy(
+    wallet: string,
+    rule: PortablePolicyRule,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
     const tx = await this.build<undefined>(
       'set_policy',
       {
@@ -138,7 +142,7 @@ export class WardenClient {
         daily_velocity_cap: decimalToI128(rule.dailyVelocityCap, this.config.referenceAssetDecimals),
         new_recipient_requires_stepup: rule.newRecipientRequiresStepUp,
       },
-      wallet,
+      sourceAccount ?? wallet,
     );
     return { xdr: tx.toXdr() };
   }
@@ -147,8 +151,16 @@ export class WardenClient {
     await this.submit<undefined>(signedXdr);
   }
 
-  async buildAddTrustedRecipient(wallet: string, recipient: string): Promise<{ xdr: string }> {
-    const tx = await this.build<undefined>('add_trusted_recipient', { wallet, recipient }, wallet);
+  async buildAddTrustedRecipient(
+    wallet: string,
+    recipient: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'add_trusted_recipient',
+      { wallet, recipient },
+      sourceAccount ?? wallet,
+    );
     return { xdr: tx.toXdr() };
   }
 
@@ -156,11 +168,15 @@ export class WardenClient {
     await this.submit<undefined>(signedXdr);
   }
 
-  async buildRemoveTrustedRecipient(wallet: string, recipient: string): Promise<{ xdr: string }> {
+  async buildRemoveTrustedRecipient(
+    wallet: string,
+    recipient: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
     const tx = await this.build<undefined>(
       'remove_trusted_recipient',
       { wallet, recipient },
-      wallet,
+      sourceAccount ?? wallet,
     );
     return { xdr: tx.toXdr() };
   }
@@ -169,7 +185,12 @@ export class WardenClient {
     await this.submit<undefined>(signedXdr);
   }
 
-  async buildEvaluate(wallet: string, recipient: string, amount: string): Promise<{ xdr: string }> {
+  async buildEvaluate(
+    wallet: string,
+    recipient: string,
+    amount: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
     const tx = await this.build<RawUnion>(
       'evaluate',
       {
@@ -177,7 +198,7 @@ export class WardenClient {
         recipient,
         amount: decimalToI128(amount, this.config.referenceAssetDecimals),
       },
-      wallet,
+      sourceAccount ?? wallet,
     );
     return { xdr: tx.toXdr() };
   }
