@@ -243,3 +243,75 @@ describe('evaluate round trip', () => {
     });
   });
 });
+
+describe('getPolicy and getVelocity', () => {
+  it('getPolicy decodes a configured policy', async () => {
+    const rawPolicy = {
+      owner: 'GWALLET',
+      max_no_stepup: 1_500_000_000n,
+      daily_velocity_cap: 5_000_000_000n,
+      new_recipient_requires_stepup: true,
+      trusted_recipients: ['GRECIPIENT'],
+      updated_at: 1234n,
+    };
+    const unwrap = vi.fn(() => rawPolicy);
+    mockBuild.mockResolvedValueOnce({ result: { unwrap } });
+
+    const client = new WardenClient(CONFIG);
+    const policy = await client.getPolicy('GWALLET');
+
+    expect(policy).toEqual({
+      owner: 'GWALLET',
+      maxNoStepUp: '150',
+      dailyVelocityCap: '500',
+      newRecipientRequiresStepUp: true,
+      trustedRecipients: ['GRECIPIENT'],
+      updatedAt: 1234n,
+    });
+
+    const callArgs = mockBuild.mock.calls[0]?.[0];
+    expect(callArgs.method).toBe('get_policy');
+    expect(callArgs.publicKey).toBeUndefined();
+  });
+
+  it('getPolicy returns null on PolicyNotFound instead of throwing', async () => {
+    mockBuild.mockRejectedValueOnce(new Error('HostError: Error(Contract, #3)'));
+
+    const client = new WardenClient(CONFIG);
+    const policy = await client.getPolicy('GWALLET');
+
+    expect(policy).toBeNull();
+  });
+
+  it('getPolicy rethrows a different contract error rather than swallowing it', async () => {
+    mockBuild.mockRejectedValueOnce(new Error('HostError: Error(Contract, #4)'));
+
+    const client = new WardenClient(CONFIG);
+    await expect(client.getPolicy('GWALLET')).rejects.toMatchObject({
+      name: 'WardenSdkError',
+      code: 4,
+    });
+  });
+
+  it('getVelocity decodes a recorded window', async () => {
+    const rawWindow = { window_start: 1000n, cumulative_amount: 250_000_000n, tx_count: 3 };
+    const unwrap = vi.fn(() => rawWindow);
+    mockBuild.mockResolvedValueOnce({ result: { unwrap } });
+
+    const client = new WardenClient(CONFIG);
+    const window = await client.getVelocity('GWALLET');
+
+    expect(window).toEqual({ windowStart: 1000n, cumulativeAmount: '25', txCount: 3 });
+  });
+
+  it('getVelocity returns a zeroed window shape when no activity has occurred', async () => {
+    const rawWindow = { window_start: 0n, cumulative_amount: 0n, tx_count: 0 };
+    const unwrap = vi.fn(() => rawWindow);
+    mockBuild.mockResolvedValueOnce({ result: { unwrap } });
+
+    const client = new WardenClient(CONFIG);
+    const window = await client.getVelocity('GWALLET');
+
+    expect(window).toEqual({ windowStart: 0n, cumulativeAmount: '0', txCount: 0 });
+  });
+});
