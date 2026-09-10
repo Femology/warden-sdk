@@ -4,7 +4,7 @@ import type { Server } from '@stellar/stellar-sdk/rpc';
 
 import { decimalToI128, i128ToDecimal } from './codec.js';
 import { WardenErrorCode, WardenSdkError } from './errors.js';
-import type { Decision, Policy, PortablePolicyRule, StepUpReason } from './types.js';
+import type { Decision, Policy, PortablePolicyRule, StepUpReason, VelocityWindow } from './types.js';
 
 export interface WardenClientConfig {
   contractId: string;
@@ -204,6 +204,15 @@ export class WardenClient {
     }
   }
 
+  /**
+   * Simulate-only. Never returns null -- mirrors the contract's own
+   * behavior of returning a zeroed fresh window when no activity has
+   * occurred yet, rather than treating "no activity" as an error.
+   */
+  async getVelocity(wallet: string): Promise<VelocityWindow> {
+    const tx = await this.build<RawVelocityWindow>('get_velocity', { wallet }, undefined);
+    return decodeVelocityWindow(tx.result.unwrap(), this.config.referenceAssetDecimals);
+  }
 }
 
 /**
@@ -236,6 +245,20 @@ function decodePolicy(raw: RawPolicy, decimals: number): Policy {
     newRecipientRequiresStepUp: raw.new_recipient_requires_stepup,
     trustedRecipients: [...raw.trusted_recipients],
     updatedAt: raw.updated_at,
+  };
+}
+
+interface RawVelocityWindow {
+  window_start: bigint;
+  cumulative_amount: bigint;
+  tx_count: number;
+}
+
+function decodeVelocityWindow(raw: RawVelocityWindow, decimals: number): VelocityWindow {
+  return {
+    windowStart: raw.window_start,
+    cumulativeAmount: i128ToDecimal(raw.cumulative_amount, decimals),
+    txCount: raw.tx_count,
   };
 }
 
