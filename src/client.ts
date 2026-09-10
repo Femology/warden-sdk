@@ -4,7 +4,7 @@ import type { Server } from '@stellar/stellar-sdk/rpc';
 
 import { decimalToI128 } from './codec.js';
 import { WardenSdkError } from './errors.js';
-import type { PortablePolicyRule } from './types.js';
+import type { Decision, PortablePolicyRule, StepUpReason } from './types.js';
 
 export interface WardenClientConfig {
   contractId: string;
@@ -168,4 +168,49 @@ export class WardenClient {
   async submitRemoveTrustedRecipient(signedXdr: string): Promise<void> {
     await this.submit<undefined>(signedXdr);
   }
+
+  async buildEvaluate(wallet: string, recipient: string, amount: string): Promise<{ xdr: string }> {
+    const tx = await this.build<RawUnion>(
+      'evaluate',
+      {
+        wallet,
+        recipient,
+        amount: decimalToI128(amount, this.config.referenceAssetDecimals),
+      },
+      wallet,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitEvaluate(signedXdr: string): Promise<Decision> {
+    const raw = await this.submit<RawUnion>(signedXdr);
+    return decodeDecision(raw);
+  }
+}
+
+/**
+ * The wire shape soroban-sdk decodes a Rust #[contracttype] enum into:
+ * a unit variant like Decision::Allow becomes { tag: "Allow" }, and a tuple
+ * variant like Decision::RequireStepUp(reason) becomes
+ * { tag: "RequireStepUp", values: [reasonRawUnion] } -- verified against
+ * the SDK's own spec-decoding source, since this shape is not otherwise
+ * documented plainly.
+ */
+interface RawUnion {
+  tag: string;
+  values?: unknown[];
+}
+
+function decodeDecision(raw: RawUnion): Decision {
+  if (raw.tag === 'Allow') {
+    return { type: 'Allow' };
+  }
+  if (raw.tag === 'RequireStepUp') {
+    const reasonRaw = raw.values?.[0] as RawUnion | undefined;
+    if (!reasonRaw) {
+      throw new Error('Malformed RequireStepUp decision: missing reason.');
+    }
+    return { type: 'RequireStepUp', reason: reasonRaw.tag as StepUpReason };
+  }
+  throw new Error(`Unrecognized Decision tag from contract: ${raw.tag}`);
 }
