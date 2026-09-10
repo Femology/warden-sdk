@@ -2,9 +2,9 @@ import { AssembledTransaction, Client as ContractClient, Spec } from '@stellar/s
 import type { ErrorMessage, Result } from '@stellar/stellar-sdk/contract';
 import type { Server } from '@stellar/stellar-sdk/rpc';
 
-import { decimalToI128 } from './codec.js';
-import { WardenSdkError } from './errors.js';
-import type { Decision, PortablePolicyRule, StepUpReason } from './types.js';
+import { decimalToI128, i128ToDecimal } from './codec.js';
+import { WardenErrorCode, WardenSdkError } from './errors.js';
+import type { Decision, Policy, PortablePolicyRule, StepUpReason } from './types.js';
 
 export interface WardenClientConfig {
   contractId: string;
@@ -186,6 +186,24 @@ export class WardenClient {
     const raw = await this.submit<RawUnion>(signedXdr);
     return decodeDecision(raw);
   }
+
+  /**
+   * Simulate-only, no signing, no submission. Returns null on PolicyNotFound
+   * -- a wallet that has not configured a policy yet is an expected, common
+   * state, not an error the caller should have to catch.
+   */
+  async getPolicy(wallet: string): Promise<Policy | null> {
+    try {
+      const tx = await this.build<RawPolicy>('get_policy', { wallet }, undefined);
+      return decodePolicy(tx.result.unwrap(), this.config.referenceAssetDecimals);
+    } catch (error) {
+      if (error instanceof WardenSdkError && error.code === WardenErrorCode.PolicyNotFound) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
 }
 
 /**
@@ -199,6 +217,26 @@ export class WardenClient {
 interface RawUnion {
   tag: string;
   values?: unknown[];
+}
+
+interface RawPolicy {
+  owner: string;
+  max_no_stepup: bigint;
+  daily_velocity_cap: bigint;
+  new_recipient_requires_stepup: boolean;
+  trusted_recipients: string[];
+  updated_at: bigint;
+}
+
+function decodePolicy(raw: RawPolicy, decimals: number): Policy {
+  return {
+    owner: raw.owner,
+    maxNoStepUp: i128ToDecimal(raw.max_no_stepup, decimals),
+    dailyVelocityCap: i128ToDecimal(raw.daily_velocity_cap, decimals),
+    newRecipientRequiresStepUp: raw.new_recipient_requires_stepup,
+    trustedRecipients: [...raw.trusted_recipients],
+    updatedAt: raw.updated_at,
+  };
 }
 
 function decodeDecision(raw: RawUnion): Decision {
