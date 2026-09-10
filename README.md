@@ -1,4 +1,20 @@
-# warden-sdk
+<div align="center">
+
+# Warden — SDK
+
+**TypeScript client library for `warden-contract`. Never signs anything, never touches
+a private key.**
+
+[![CI](https://github.com/Femology/warden-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Femology/warden-sdk/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/badge/npm-not%20yet%20published-lightgrey)](https://github.com/Femology/warden-sdk)
+
+[Warden org](https://github.com/Femology) · [warden-contract](https://github.com/Femology/warden-contract) · [warden-app](https://github.com/Femology/warden-app) · [warden-monitor](https://github.com/Femology/warden-monitor) · [Discussions](https://github.com/Femology/warden-sdk/discussions)
+
+</div>
+
+---
+
 
 The TypeScript client library for [`warden-contract`](https://github.com/Femology/warden-contract). It is the only supported way another application talks to Warden — nobody should hand-build a Soroban invocation against this contract directly.
 
@@ -127,3 +143,20 @@ npm test        # vitest run
 ```
 
 Unit tests mock the `@stellar/stellar-sdk/contract` module boundary — they don't require a live deployed contract to run. End-to-end integration tests against an actual testnet deployment belong in `warden-app`'s test suite, once that repo exists.
+
+---
+
+## Maintainers
+
+| Name | GitHub | Contact |
+|---|---|---|
+| Femology | [@Femology](https://github.com/Femology) | femimi1234@gmail.com |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Found a security issue? See
+[SECURITY.md](SECURITY.md) instead of opening a public issue.
+
+<a href="https://github.com/Femology/warden-sdk/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Femology/warden-sdk" alt="Contributors" />
+</a>
