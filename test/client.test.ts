@@ -186,3 +186,60 @@ describe('removeTrustedRecipient round trip', () => {
     });
   });
 });
+
+describe('evaluate round trip', () => {
+  it('buildEvaluate encodes the amount and returns unsigned xdr', async () => {
+    const toXdr = vi.fn(() => 'UNSIGNED_XDR');
+    mockBuild.mockResolvedValueOnce({ toXdr });
+
+    const client = new WardenClient(CONFIG);
+    const { xdr } = await client.buildEvaluate('GWALLET', 'GRECIPIENT', '42.5');
+
+    expect(xdr).toBe('UNSIGNED_XDR');
+    const callArgs = mockBuild.mock.calls[0]?.[0];
+    expect(callArgs.method).toBe('evaluate');
+    expect(mockSpec.funcArgsToScVals).toHaveBeenCalledWith('evaluate', {
+      wallet: 'GWALLET',
+      recipient: 'GRECIPIENT',
+      amount: 425_000_000n,
+    });
+  });
+
+  it.each([
+    [{ tag: 'Allow' }, { type: 'Allow' }],
+    [
+      { tag: 'RequireStepUp', values: [{ tag: 'AmountExceeded' }] },
+      { type: 'RequireStepUp', reason: 'AmountExceeded' },
+    ],
+    [
+      { tag: 'RequireStepUp', values: [{ tag: 'NewRecipient' }] },
+      { type: 'RequireStepUp', reason: 'NewRecipient' },
+    ],
+    [
+      { tag: 'RequireStepUp', values: [{ tag: 'VelocityExceeded' }] },
+      { type: 'RequireStepUp', reason: 'VelocityExceeded' },
+    ],
+  ])('submitEvaluate decodes %j into %j', async (raw, expected) => {
+    const unwrap = vi.fn(() => raw);
+    const send = vi.fn(async () => ({ result: { unwrap } }));
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    const decision = await client.submitEvaluate('SIGNED_XDR');
+
+    expect(decision).toEqual(expected);
+  });
+
+  it('submitEvaluate maps InvalidAmount correctly', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('HostError: Error(Contract, #4)');
+    });
+    mockFromXdr.mockResolvedValueOnce({ send });
+
+    const client = new WardenClient(CONFIG);
+    await expect(client.submitEvaluate('SIGNED_XDR')).rejects.toMatchObject({
+      name: 'WardenSdkError',
+      code: 4,
+    });
+  });
+});
