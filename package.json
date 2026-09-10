@@ -1,0 +1,30 @@
+{
+  "name": "warden-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client library for warden-contract, a Soroban risk-policy engine for Stellar smart wallets.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@stellar/stellar-sdk": "17.0.1"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "5.0.0",
+    "@types/node": "24.13.4"
+  }
+}
