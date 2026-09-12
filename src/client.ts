@@ -102,6 +102,25 @@ export class WardenClient {
     }
   }
 
+  /**
+   * Unwraps a simulate-only AssembledTransaction's result. `.result` is a
+   * lazy getter -- for a read call whose simulation genuinely reverted (e.g.
+   * get_policy against a wallet with no policy), the throw happens here,
+   * *after* build() already returned successfully, not inside build()'s own
+   * try/catch. Skipping this and calling `tx.result.unwrap()` directly
+   * leaves that throw as a raw, untranslated stellar-sdk error instead of a
+   * WardenSdkError -- found by actually calling getPolicy against a fresh
+   * wallet on the live network, where it crashed instead of returning null
+   * as documented.
+   */
+  private unwrapSimulated<T>(tx: { result: Result<T, ErrorMessage> }): T {
+    try {
+      return tx.result.unwrap();
+    } catch (error) {
+      return mapContractError(error);
+    }
+  }
+
   private async fromSignedXdr<T>(
     signedXdr: string,
   ): Promise<AssembledTransaction<Result<T, ErrorMessage>>> {
@@ -132,7 +151,7 @@ export class WardenClient {
     try {
       const assembled = await this.fromSignedXdr<T>(signedXdr);
       const sent = await assembled.send();
-      return sent.result.unwrap();
+      return this.unwrapSimulated(sent);
     } catch (error) {
       return mapContractError(error);
     }
@@ -227,7 +246,7 @@ export class WardenClient {
   async getPolicy(wallet: string): Promise<Policy | null> {
     try {
       const tx = await this.build<RawPolicy>('get_policy', { wallet }, undefined);
-      return decodePolicy(tx.result.unwrap(), this.config.referenceAssetDecimals);
+      return decodePolicy(this.unwrapSimulated(tx), this.config.referenceAssetDecimals);
     } catch (error) {
       if (error instanceof WardenSdkError && error.code === WardenErrorCode.PolicyNotFound) {
         return null;
@@ -243,7 +262,7 @@ export class WardenClient {
    */
   async getVelocity(wallet: string): Promise<VelocityWindow> {
     const tx = await this.build<RawVelocityWindow>('get_velocity', { wallet }, undefined);
-    return decodeVelocityWindow(tx.result.unwrap(), this.config.referenceAssetDecimals);
+    return decodeVelocityWindow(this.unwrapSimulated(tx), this.config.referenceAssetDecimals);
   }
 }
 
@@ -266,10 +285,14 @@ interface RawPolicy {
   daily_velocity_cap: bigint;
   hourly_velocity_cap: bigint;
   new_recipient_requires_stepup: boolean;
-  // Decoded from the contract's Map<Address, u64> -- a plain object, not
-  // an array. The old shape here (string[]) was Phase <14; this SDK now
-  // targets the Phase 14 contract exclusively.
-  trusted_recipients: Record<string, bigint>;
+  // Decoded from the contract's Map<Address, u64>. Verified against a real
+  // deployed Phase 14 contract, not assumed: stellar-sdk's scValToNative
+  // decodes a Soroban map whose keys aren't plain strings/symbols (an
+  // Address is neither) as an array of [key, value] tuples, *not* a plain
+  // object -- {...trusted_recipients} on that array silently produces
+  // {"0": [address, timestamp]} instead of throwing, which is exactly the
+  // kind of shape bug that only shows up against a live network.
+  trusted_recipients: [string, bigint][];
   trust_decay_seconds: bigint;
   updated_at: bigint;
 }
@@ -281,7 +304,7 @@ function decodePolicy(raw: RawPolicy, decimals: number): Policy {
     dailyVelocityCap: i128ToDecimal(raw.daily_velocity_cap, decimals),
     hourlyVelocityCap: i128ToDecimal(raw.hourly_velocity_cap, decimals),
     newRecipientRequiresStepUp: raw.new_recipient_requires_stepup,
-    trustedRecipients: { ...raw.trusted_recipients },
+    trustedRecipients: Object.fromEntries(raw.trusted_recipients),
     trustDecaySeconds: raw.trust_decay_seconds,
     updatedAt: raw.updated_at,
   };
