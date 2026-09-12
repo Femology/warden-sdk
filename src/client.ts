@@ -4,7 +4,16 @@ import type { Server } from '@stellar/stellar-sdk/rpc';
 
 import { decimalToI128, i128ToDecimal } from './codec.js';
 import { WardenErrorCode, WardenSdkError } from './errors.js';
-import type { Decision, Policy, PortablePolicyRule, StepUpReason, VelocityWindow } from './types.js';
+import type {
+  AccountState,
+  Decision,
+  GuardianConfig,
+  Policy,
+  PortablePolicyRule,
+  RecoveryProposal,
+  StepUpReason,
+  VelocityWindow,
+} from './types.js';
 
 export interface WardenClientConfig {
   contractId: string;
@@ -76,9 +85,21 @@ export class WardenClient {
    * Builds and simulates a contract call, returning the AssembledTransaction.
    * Deliberately omits errorTypes: warden-contract's WardenError variants
    * carry no doc comments, so the SDK's own error-message mapping is empty
-   * and useless -- instead, simulation failures are left to throw their raw
-   * host error (verified: its message contains "Error(Contract, #N)"),
-   * which mapContractError translates into a typed WardenSdkError.
+   * and useless -- instead, simulation failures are mapped by explicitly
+   * checking `.result` below (see unwrapSimulated's own doc comment for why
+   * that check can't be skipped), via the same mapContractError this
+   * method's own try/catch uses for a build-time/network failure.
+   *
+   * That explicit check matters even for build* (write) callers that only
+   * want the XDR to hand off for signing, not the decoded value: skipping
+   * it and calling `tx.toXdr()` straight off a *reverted* simulation still
+   * produces XDR that signs and submits without complaint, then fails at
+   * the network with a bare "tx_malformed" instead of the specific
+   * WardenError the simulation already knew about -- found by calling
+   * proposeRecovery with a target_state that isn't actually less
+   * restrictive against the live deployed contract, where it produced
+   * exactly that cryptic tx_malformed instead of a clean
+   * InvalidTargetState.
    */
   private async build<T>(
     method: string,
@@ -86,8 +107,9 @@ export class WardenClient {
     publicKey: string | undefined,
   ): Promise<AssembledTransaction<Result<T, ErrorMessage>>> {
     const spec = await this.getSpec();
+    let tx: AssembledTransaction<Result<T, ErrorMessage>>;
     try {
-      return await AssembledTransaction.build<Result<T, ErrorMessage>>({
+      tx = await AssembledTransaction.build<Result<T, ErrorMessage>>({
         method,
         args: args ? spec.funcArgsToScVals(method, args) : undefined,
         contractId: this.config.contractId,
@@ -100,6 +122,13 @@ export class WardenClient {
     } catch (error) {
       return mapContractError(error);
     }
+    // Discards the decoded value on purpose -- this call exists solely for
+    // its throwing side effect. Every actual caller either re-reads
+    // tx.result itself right after (getPolicy and friends) or only wanted
+    // the XDR in the first place (every build* method); calling the lazy
+    // getter here and again there is harmless, not a double-unwrap bug.
+    this.unwrapSimulated(tx);
+    return tx;
   }
 
   /**
@@ -264,6 +293,165 @@ export class WardenClient {
     const tx = await this.build<RawVelocityWindow>('get_velocity', { wallet }, undefined);
     return decodeVelocityWindow(this.unwrapSimulated(tx), this.config.referenceAssetDecimals);
   }
+
+  async buildAddFlaggedAddress(
+    admin: string,
+    address: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'add_flagged_address',
+      { admin, address },
+      sourceAccount ?? admin,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitAddFlaggedAddress(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  async buildRemoveFlaggedAddress(
+    admin: string,
+    address: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'remove_flagged_address',
+      { admin, address },
+      sourceAccount ?? admin,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitRemoveFlaggedAddress(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  async buildSetGuardians(
+    wallet: string,
+    guardians: string[],
+    threshold: number,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'set_guardians',
+      { wallet, guardians, threshold },
+      sourceAccount ?? wallet,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitSetGuardians(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  /** Requires the *proposer*'s auth, not the wallet's -- sourceAccount
+   * defaults to proposer, matching who the contract actually calls
+   * require_auth() on. */
+  async buildProposeRecovery(
+    wallet: string,
+    proposer: string,
+    targetState: AccountState,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>(
+      'propose_recovery',
+      // AccountState is fieldless in the contract but still wire-encoded as
+      // a tagged union, not a bare symbol/string -- { tag } is required
+      // here or funcArgsToScVals throws "no such enum entry: undefined".
+      { wallet, proposer, target_state: encodeAccountState(targetState) },
+      sourceAccount ?? proposer,
+    );
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitProposeRecovery(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  /** Requires the guardian's auth, not the wallet's -- sourceAccount
+   * defaults to guardian. */
+  async buildApproveRecovery(
+    wallet: string,
+    guardian: string,
+    sourceAccount?: string,
+  ): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>('approve_recovery', { wallet, guardian }, sourceAccount ?? guardian);
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitApproveRecovery(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  /**
+   * execute_recovery has no require_auth() call on any address in the
+   * contract -- the entire point of guardian recovery is routing around a
+   * compromised or unavailable owner key. sourceAccount is still required
+   * here (a Stellar transaction envelope always needs a fee-paying source
+   * account and its own classic signature), but deliberately has no
+   * default the way every other build* method here defaults to its
+   * primary address: defaulting to `wallet` would misleadingly suggest the
+   * wallet needs to be involved at all. Pass whichever funded account is
+   * actually submitting this -- a guardian's, a keeper's, anyone's.
+   */
+  async buildExecuteRecovery(wallet: string, sourceAccount: string): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>('execute_recovery', { wallet }, sourceAccount);
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitExecuteRecovery(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  async buildCancelRecovery(wallet: string, sourceAccount?: string): Promise<{ xdr: string }> {
+    const tx = await this.build<undefined>('cancel_recovery', { wallet }, sourceAccount ?? wallet);
+    return { xdr: tx.toXdr() };
+  }
+
+  async submitCancelRecovery(signedXdr: string): Promise<void> {
+    await this.submit<undefined>(signedXdr);
+  }
+
+  /** Simulate-only. Never errors on absence -- every wallet has an
+   * AccountState even if it never called set_guardians; absence means
+   * Normal, same reasoning as getVelocity's zeroed-window default. */
+  async getAccountState(wallet: string): Promise<AccountState> {
+    const tx = await this.build<RawUnion>('get_account_state', { wallet }, undefined);
+    return decodeAccountState(this.unwrapSimulated(tx));
+  }
+
+  /** Simulate-only. Returns null if set_guardians was never called --
+   * "never configured" and "configured with an empty list" are genuinely
+   * different states, so unlike getAccountState this does distinguish
+   * absence, the same way getPolicy does. */
+  async getGuardians(wallet: string): Promise<GuardianConfig | null> {
+    try {
+      const tx = await this.build<RawGuardianConfig>('get_guardians', { wallet }, undefined);
+      return decodeGuardianConfig(this.unwrapSimulated(tx));
+    } catch (error) {
+      if (error instanceof WardenSdkError && error.code === WardenErrorCode.GuardiansNotConfigured) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Simulate-only. Returns null if nothing is currently pending, rather
+   * than throwing -- "no recovery in progress" is an expected, common
+   * state, not an error the caller should have to catch. */
+  async getRecoveryProposal(wallet: string): Promise<RecoveryProposal | null> {
+    try {
+      const tx = await this.build<RawRecoveryProposal>('get_recovery_proposal', { wallet }, undefined);
+      return decodeRecoveryProposal(this.unwrapSimulated(tx));
+    } catch (error) {
+      if (error instanceof WardenSdkError && error.code === WardenErrorCode.RecoveryNotFound) {
+        return null;
+      }
+      throw error;
+    }
+  }
 }
 
 /**
@@ -321,6 +509,49 @@ function decodeVelocityWindow(raw: RawVelocityWindow, decimals: number): Velocit
     windowStart: raw.window_start,
     cumulativeAmount: i128ToDecimal(raw.cumulative_amount, decimals),
     txCount: raw.tx_count,
+  };
+}
+
+interface RawGuardianConfig {
+  guardians: string[];
+  threshold: number;
+}
+
+function decodeGuardianConfig(raw: RawGuardianConfig): GuardianConfig {
+  return { guardians: raw.guardians, threshold: raw.threshold };
+}
+
+/**
+ * AccountState is fieldless in the contract, but still wire-encoded/decoded
+ * as a tagged union ({ tag: "Normal" }, no `values`), not a bare symbol --
+ * verified against the live deployed contract (a CLI's own pretty-printing
+ * of it as a plain string was misleading). These two functions are the only
+ * place that shape is dealt with; every public method takes/returns the
+ * plain string type.
+ */
+function encodeAccountState(state: AccountState): RawUnion {
+  return { tag: state };
+}
+
+function decodeAccountState(raw: RawUnion): AccountState {
+  return raw.tag as AccountState;
+}
+
+interface RawRecoveryProposal {
+  proposer: string;
+  target_state: RawUnion;
+  approvals: string[];
+  proposed_at: bigint;
+  timelock_seconds: bigint;
+}
+
+function decodeRecoveryProposal(raw: RawRecoveryProposal): RecoveryProposal {
+  return {
+    proposer: raw.proposer,
+    targetState: decodeAccountState(raw.target_state),
+    approvals: raw.approvals,
+    proposedAt: raw.proposed_at,
+    timelockSeconds: raw.timelock_seconds,
   };
 }
 
