@@ -26,11 +26,46 @@ export interface VelocityWindow {
   txCount: number;
 }
 
-export type StepUpReason = 'AmountExceeded' | 'NewRecipient' | 'VelocityExceeded' | 'HourlyVelocityExceeded';
+export type StepUpReason =
+  | 'AmountExceeded'
+  | 'NewRecipient'
+  | 'VelocityExceeded'
+  | 'HourlyVelocityExceeded'
+  | 'FlaggedRecipient';
 
 export type Decision =
   | { type: 'Allow' }
   | { type: 'RequireStepUp'; reason: StepUpReason };
+
+/**
+ * Ordered least to most restrictive, matching warden-contract's own
+ * declaration order exactly (Rust's derived Ord follows it directly). This
+ * is the friendly, decoded shape this SDK exposes -- on the wire, even
+ * though every variant is fieldless, stellar-sdk still encodes/decodes it
+ * as a tagged union ({ tag: "Normal" }, no `values`), the same shape as
+ * StepUpReason inside Decision. Assumed at first to be a bare string
+ * (a CLI's own pretty-printing suggested that), which was wrong in both
+ * directions: encoding a plain string into propose_recovery's target_state
+ * argument fails client-side with "no such enum entry: undefined", and
+ * get_account_state's raw result really is { tag: "Normal" }, not "Normal"
+ * -- found by actually calling both against the live deployed contract.
+ * client.ts wraps/unwraps this at the boundary so callers never see the
+ * `{ tag }` shape.
+ */
+export type AccountState = 'Normal' | 'Watch' | 'Restricted' | 'Challenged' | 'Frozen';
+
+export interface GuardianConfig {
+  guardians: string[]; // max 7, enforced by the contract's set_guardians
+  threshold: number; // 1 <= threshold <= guardians.length
+}
+
+export interface RecoveryProposal {
+  proposer: string;
+  targetState: AccountState;
+  approvals: string[];
+  proposedAt: bigint;
+  timelockSeconds: bigint;
+}
 
 /**
  * The chain-neutral policy rule shape. A future non-Stellar (e.g. EVM)

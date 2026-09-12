@@ -10,6 +10,19 @@ export enum WardenErrorCode {
   InvalidPolicyParams = 5,
   RecipientAlreadyTrusted = 6,
   RecipientNotTrusted = 7,
+  NotAdmin = 8,
+  AddressAlreadyFlagged = 9,
+  AddressNotFlagged = 10,
+  InvalidGuardianConfig = 11,
+  GuardianConfigLocked = 12,
+  GuardiansNotConfigured = 13,
+  NotGuardian = 14,
+  InvalidTargetState = 15,
+  RecoveryAlreadyProposed = 16,
+  RecoveryNotFound = 17,
+  AlreadyApproved = 18,
+  InsufficientApprovals = 19,
+  TimelockNotElapsed = 20,
 }
 
 const MESSAGES: Record<WardenErrorCode, string> = {
@@ -21,6 +34,22 @@ const MESSAGES: Record<WardenErrorCode, string> = {
     'Invalid policy parameters: max_no_stepup must be non-negative, and daily_velocity_cap must be at least max_no_stepup.',
   [WardenErrorCode.RecipientAlreadyTrusted]: 'This recipient is already trusted.',
   [WardenErrorCode.RecipientNotTrusted]: 'This recipient is not currently trusted.',
+  [WardenErrorCode.NotAdmin]: 'This address is not the contract admin.',
+  [WardenErrorCode.AddressAlreadyFlagged]: 'This address is already flagged.',
+  [WardenErrorCode.AddressNotFlagged]: 'This address is not currently flagged.',
+  [WardenErrorCode.InvalidGuardianConfig]:
+    'Invalid guardian configuration: at most 7 guardians, and threshold must be between 1 and the number of guardians.',
+  [WardenErrorCode.GuardianConfigLocked]:
+    'Guardians can only be configured while the account is Normal or Watch.',
+  [WardenErrorCode.GuardiansNotConfigured]: 'This wallet has not configured any guardians yet.',
+  [WardenErrorCode.NotGuardian]: 'This address is not one of the wallet\'s configured guardians.',
+  [WardenErrorCode.InvalidTargetState]:
+    'The proposed target state must be strictly less restrictive than the current one.',
+  [WardenErrorCode.RecoveryAlreadyProposed]: 'A recovery proposal is already pending for this wallet.',
+  [WardenErrorCode.RecoveryNotFound]: 'No recovery proposal is currently pending for this wallet.',
+  [WardenErrorCode.AlreadyApproved]: 'This guardian has already approved the current proposal.',
+  [WardenErrorCode.InsufficientApprovals]: 'Not enough guardians have approved this proposal yet.',
+  [WardenErrorCode.TimelockNotElapsed]: 'The recovery timelock has not elapsed yet.',
 };
 
 /**
