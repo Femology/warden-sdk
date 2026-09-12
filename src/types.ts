@@ -8,8 +8,15 @@ export interface Policy {
   owner: string;
   maxNoStepUp: string;
   dailyVelocityCap: string;
+  hourlyVelocityCap: string;
   newRecipientRequiresStepUp: boolean;
-  trustedRecipients: string[];
+  /** Address -> last_paid_at (ledger timestamp of the most recent transfer
+   * evaluate() saw to this recipient, or when they were added if never
+   * paid since). A plain object, not a Map, since this is decoded straight
+   * from the contract's own Map<Address, u64> via the dynamic contract
+   * spec and JSON-serializes cleanly either way. */
+  trustedRecipients: Record<string, bigint>;
+  trustDecaySeconds: bigint;
   updatedAt: bigint;
 }
 
@@ -19,7 +26,7 @@ export interface VelocityWindow {
   txCount: number;
 }
 
-export type StepUpReason = 'AmountExceeded' | 'NewRecipient' | 'VelocityExceeded';
+export type StepUpReason = 'AmountExceeded' | 'NewRecipient' | 'VelocityExceeded' | 'HourlyVelocityExceeded';
 
 export type Decision =
   | { type: 'Allow' }
@@ -36,4 +43,12 @@ export interface PortablePolicyRule {
   dailyVelocityCap: string;
   newRecipientRequiresStepUp: boolean;
   trustedRecipients: string[];
+  /** Decimal string, e.g. "50.00". Must be <= dailyVelocityCap -- the
+   * contract rejects otherwise (InvalidPolicyParams). */
+  hourlyVelocityCap: string;
+  /** Duration in seconds a trusted recipient stays trusted without a
+   * payment. A plain number is safe here (realistic decay durations never
+   * approach u64/Number.MAX_SAFE_INTEGER); converted to a BigInt at the
+   * contract-call boundary regardless, since that field is u64 on-chain. */
+  trustDecaySeconds: number;
 }

@@ -54,6 +54,8 @@ describe('setPolicy build/submit round trip', () => {
       dailyVelocityCap: '500.00',
       newRecipientRequiresStepUp: true,
       trustedRecipients: [],
+      hourlyVelocityCap: '200.00',
+      trustDecaySeconds: 2_592_000,
     });
 
     expect(xdr).toBe('UNSIGNED_XDR');
@@ -68,6 +70,8 @@ describe('setPolicy build/submit round trip', () => {
       max_no_stepup: 1_500_000_000n,
       daily_velocity_cap: 5_000_000_000n,
       new_recipient_requires_stepup: true,
+      hourly_velocity_cap: 2_000_000_000n,
+      trust_decay_seconds: 2_592_000n,
     });
   });
 
@@ -219,6 +223,10 @@ describe('evaluate round trip', () => {
       { tag: 'RequireStepUp', values: [{ tag: 'VelocityExceeded' }] },
       { type: 'RequireStepUp', reason: 'VelocityExceeded' },
     ],
+    [
+      { tag: 'RequireStepUp', values: [{ tag: 'HourlyVelocityExceeded' }] },
+      { type: 'RequireStepUp', reason: 'HourlyVelocityExceeded' },
+    ],
   ])('submitEvaluate decodes %j into %j', async (raw, expected) => {
     const unwrap = vi.fn(() => raw);
     const send = vi.fn(async () => ({ result: { unwrap } }));
@@ -250,8 +258,10 @@ describe('getPolicy and getVelocity', () => {
       owner: 'GWALLET',
       max_no_stepup: 1_500_000_000n,
       daily_velocity_cap: 5_000_000_000n,
+      hourly_velocity_cap: 2_000_000_000n,
       new_recipient_requires_stepup: true,
-      trusted_recipients: ['GRECIPIENT'],
+      trusted_recipients: { GRECIPIENT: 1_700_000_000n },
+      trust_decay_seconds: 2_592_000n,
       updated_at: 1234n,
     };
     const unwrap = vi.fn(() => rawPolicy);
@@ -264,8 +274,10 @@ describe('getPolicy and getVelocity', () => {
       owner: 'GWALLET',
       maxNoStepUp: '150',
       dailyVelocityCap: '500',
+      hourlyVelocityCap: '200',
       newRecipientRequiresStepUp: true,
-      trustedRecipients: ['GRECIPIENT'],
+      trustedRecipients: { GRECIPIENT: 1_700_000_000n },
+      trustDecaySeconds: 2_592_000n,
       updatedAt: 1234n,
     });
 
