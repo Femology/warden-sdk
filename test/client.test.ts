@@ -260,7 +260,12 @@ describe('getPolicy and getVelocity', () => {
       daily_velocity_cap: 5_000_000_000n,
       hourly_velocity_cap: 2_000_000_000n,
       new_recipient_requires_stepup: true,
-      trusted_recipients: { GRECIPIENT: 1_700_000_000n },
+      // What stellar-sdk's scValToNative actually returns for a Soroban
+      // Map<Address, u64> -- an array of [key, value] tuples, since an
+      // Address isn't a plain string/symbol key. Verified against a real
+      // deployed contract; a plain object here would pass while missing
+      // the exact bug this shape caused (see decodePolicy's comment).
+      trusted_recipients: [['GRECIPIENT', 1_700_000_000n]] as [string, bigint][],
       trust_decay_seconds: 2_592_000n,
       updated_at: 1234n,
     };
@@ -286,8 +291,26 @@ describe('getPolicy and getVelocity', () => {
     expect(callArgs.publicKey).toBeUndefined();
   });
 
+  // Real stellar-sdk behavior, verified against the live network: build()
+  // itself resolves even when simulation reverted -- the throw happens
+  // later, lazily, the moment `.result` is *accessed* (a getter, not a
+  // plain property). A mock where mockBuild itself rejects (the shape the
+  // two tests below used to have) never exercises that lazy-getter path,
+  // and missed a real bug: getPolicy's catch block never routed the raw
+  // error through mapContractError, so it never actually matched
+  // `instanceof WardenSdkError` and PolicyNotFound was never caught in
+  // practice -- getPolicy crashed on a real fresh wallet instead of
+  // returning null as documented.
+  function mockBuildWithRevertingResult(hostErrorMessage: string) {
+    mockBuild.mockResolvedValueOnce({
+      get result(): never {
+        throw new Error(hostErrorMessage);
+      },
+    });
+  }
+
   it('getPolicy returns null on PolicyNotFound instead of throwing', async () => {
-    mockBuild.mockRejectedValueOnce(new Error('HostError: Error(Contract, #3)'));
+    mockBuildWithRevertingResult('HostError: Error(Contract, #3)');
 
     const client = new WardenClient(CONFIG);
     const policy = await client.getPolicy('GWALLET');
@@ -296,7 +319,7 @@ describe('getPolicy and getVelocity', () => {
   });
 
   it('getPolicy rethrows a different contract error rather than swallowing it', async () => {
-    mockBuild.mockRejectedValueOnce(new Error('HostError: Error(Contract, #4)'));
+    mockBuildWithRevertingResult('HostError: Error(Contract, #4)');
 
     const client = new WardenClient(CONFIG);
     await expect(client.getPolicy('GWALLET')).rejects.toMatchObject({
@@ -325,5 +348,15 @@ describe('getPolicy and getVelocity', () => {
     const window = await client.getVelocity('GWALLET');
 
     expect(window).toEqual({ windowStart: 0n, cumulativeAmount: '0', txCount: 0 });
+  });
+
+  it('getVelocity maps a reverted simulation to a WardenSdkError rather than a raw error', async () => {
+    mockBuildWithRevertingResult('HostError: Error(Contract, #1)');
+
+    const client = new WardenClient(CONFIG);
+    await expect(client.getVelocity('GWALLET')).rejects.toMatchObject({
+      name: 'WardenSdkError',
+      code: 1,
+    });
   });
 });
