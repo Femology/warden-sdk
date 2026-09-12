@@ -150,6 +150,8 @@ export class WardenClient {
         max_no_stepup: decimalToI128(rule.maxAmountNoStepUp, this.config.referenceAssetDecimals),
         daily_velocity_cap: decimalToI128(rule.dailyVelocityCap, this.config.referenceAssetDecimals),
         new_recipient_requires_stepup: rule.newRecipientRequiresStepUp,
+        hourly_velocity_cap: decimalToI128(rule.hourlyVelocityCap, this.config.referenceAssetDecimals),
+        trust_decay_seconds: BigInt(rule.trustDecaySeconds),
       },
       sourceAccount ?? wallet,
     );
@@ -262,8 +264,13 @@ interface RawPolicy {
   owner: string;
   max_no_stepup: bigint;
   daily_velocity_cap: bigint;
+  hourly_velocity_cap: bigint;
   new_recipient_requires_stepup: boolean;
-  trusted_recipients: string[];
+  // Decoded from the contract's Map<Address, u64> -- a plain object, not
+  // an array. The old shape here (string[]) was Phase <14; this SDK now
+  // targets the Phase 14 contract exclusively.
+  trusted_recipients: Record<string, bigint>;
+  trust_decay_seconds: bigint;
   updated_at: bigint;
 }
 
@@ -272,8 +279,10 @@ function decodePolicy(raw: RawPolicy, decimals: number): Policy {
     owner: raw.owner,
     maxNoStepUp: i128ToDecimal(raw.max_no_stepup, decimals),
     dailyVelocityCap: i128ToDecimal(raw.daily_velocity_cap, decimals),
+    hourlyVelocityCap: i128ToDecimal(raw.hourly_velocity_cap, decimals),
     newRecipientRequiresStepUp: raw.new_recipient_requires_stepup,
-    trustedRecipients: [...raw.trusted_recipients],
+    trustedRecipients: { ...raw.trusted_recipients },
+    trustDecaySeconds: raw.trust_decay_seconds,
     updatedAt: raw.updated_at,
   };
 }
